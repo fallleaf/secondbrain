@@ -4,6 +4,7 @@
 使用 SQLite FTS5 实现全文检索
 """
 
+from utils.logger import get_logger
 import sqlite3
 import os
 import threading
@@ -21,29 +22,27 @@ except ImportError:
 # 导入日志
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.logger import get_logger
 
 logger = get_logger(__name__)
-
 
 
 def _segment_chinese_text(text: str) -> str:
     """
     对中文文本进行分词，在词之间添加空格，增强 FTS5 搜索效果
-    
+
     Args:
         text: 原始文本
-        
+
     Returns:
         分词后的文本（词之间用空格分隔）
     """
     if not JIEBA_AVAILABLE:
         # 如果 jieba 不可用，返回原文本（FTS5 unicode61 会按字符切分）
         return text
-    
+
     # 使用 jieba 精确模式分词
     words = jieba.lcut(text)
-    
+
     # 过滤掉纯空白字符，但保留标点符号
     filtered_words = []
     for word in words:
@@ -53,9 +52,10 @@ def _segment_chinese_text(text: str) -> str:
             filtered_words.append(' ')
         else:
             filtered_words.append(word)
-    
+
     # 用空格连接所有词
     return ' '.join(filtered_words).strip()
+
 
 class KeywordIndex:
     """SQLite FTS5 关键词索引"""
@@ -71,7 +71,7 @@ class KeywordIndex:
         self.conn: Optional[sqlite3.Connection] = None
         self._local = threading.local()  # 线程本地存储
         self._ensure_db()
-    
+
     def _get_connection(self) -> sqlite3.Connection:
         """获取线程安全的数据库连接（强制 UTF-8 编码）"""
         if not hasattr(self._local, 'conn') or self._local.conn is None:
@@ -84,7 +84,7 @@ class KeywordIndex:
             self._local.conn.execute("PRAGMA encoding='UTF-8'")
             self._local.conn.row_factory = sqlite3.Row
         return self._local.conn
-    
+
     def _ensure_db(self) -> None:
         """确保数据库存在并初始化（强制 UTF-8 编码）"""
         # 创建目录
@@ -101,11 +101,11 @@ class KeywordIndex:
 
         # 创建 FTS5 表
         self._create_tables()
-    
+
     def _create_tables(self) -> None:
         """创建索引表"""
         cursor = self._get_connection().cursor()
-        
+
         # 创建 FTS5 全文索引表
         cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS documents USING fts5(
@@ -117,7 +117,7 @@ class KeywordIndex:
                 tokenize='porter unicode61'
             )
         """)
-        
+
         # 创建元数据表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata (
@@ -130,26 +130,26 @@ class KeywordIndex:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # 创建索引
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_metadata_file 
+            CREATE INDEX IF NOT EXISTS idx_metadata_file
             ON metadata(file_path)
         """)
-        
+
         self._get_connection().commit()
-    
+
     def add(self, doc_id: str, content: str, file_path: str,
             start_line: int = 0, end_line: int = 0) -> None:
         """添加文档到索引（确保 UTF-8 编码）"""
         cursor = self._get_connection().cursor()
-        
+
         # 确保 content 是 UTF-8 字符串
         if isinstance(content, bytes):
             content = content.decode('utf-8')
         if isinstance(file_path, bytes):
             file_path = file_path.decode('utf-8')
-        
+
         checksum = hashlib.md5(content.encode('utf-8')).hexdigest()
 
         # 检查文档是否已存在
@@ -176,22 +176,22 @@ class KeywordIndex:
         (doc_id, file_path, start_line, end_line, checksum, updated_at)
         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (str(doc_id), str(file_path), int(start_line), int(end_line), checksum))
-        
+
         self._get_connection().commit()
-    
+
     def delete(self, doc_id: str) -> None:
         """删除文档"""
         cursor = self._get_connection().cursor()
         cursor.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
         cursor.execute("DELETE FROM metadata WHERE doc_id = ?", (doc_id,))
         self._get_connection().commit()
-    
+
     def update(self, doc_id: str, content: str, file_path: str,
                start_line: int = 0, end_line: int = 0) -> None:
         """更新文档"""
         self.delete(doc_id)
         self.add(doc_id, content, file_path, start_line, end_line)
-    
+
     def search(self, query: str, top_k: int = 10,
                file_path: Optional[str] = None) -> List[Dict[str, Any]]:
         """搜索文档"""
@@ -226,7 +226,7 @@ class KeywordIndex:
                 # 确保 content 是 UTF-8 字符串
                 if isinstance(content, bytes):
                     content = content.decode('utf-8')
-                
+
                 results.append({
                     'doc_id': row['doc_id'],
                     'file_path': row['file_path'],
@@ -262,7 +262,7 @@ class KeywordIndex:
                 # 确保 content 是 UTF-8 字符串
                 if isinstance(content, bytes):
                     content = content.decode('utf-8')
-                
+
                 results.append({
                     'doc_id': row['doc_id'],
                     'file_path': row['file_path'],
@@ -273,42 +273,42 @@ class KeywordIndex:
                 })
 
         return results
-    
+
     def _clean_query(self, query: str) -> str:
         """
         清理查询字符串
-        
+
         注意：保留 * 作为通配符（如 telecom*），其他特殊字符进行转义
         """
         query = query.strip()
         if not query:
             return query
-        
+
         # 需要转义的特殊字符（排除 *，保留其作为通配符功能）
         chars_to_escape = ['(', ')', '[', ']', '{', '}', '"', '^', '$']
-        
+
         for char in chars_to_escape:
             query = query.replace(char, f'\\{char}')
-        
+
         return query
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """获取索引统计信息"""
         cursor = self._get_connection().cursor()
-        
+
         cursor.execute("SELECT COUNT(*) FROM documents")
         doc_count = cursor.fetchone()[0]
-        
+
         cursor.execute("SELECT SUM(length(content)) FROM documents")
         total_size = cursor.fetchone()[0] or 0
-        
+
         cursor.execute("SELECT COUNT(DISTINCT file_path) FROM metadata")
         file_count = cursor.fetchone()[0]
-        
+
         db_size = 0
         if os.path.exists(self.db_path):
             db_size = os.path.getsize(self.db_path)
-        
+
         return {
             'document_count': doc_count,
             'file_count': file_count,
@@ -317,7 +317,7 @@ class KeywordIndex:
             'db_path': self.db_path,
             'db_size_mb': db_size / 1024 / 1024
         }
-    
+
     def rebuild(self) -> None:
         """重建索引"""
         cursor = self._get_connection().cursor()
@@ -325,7 +325,7 @@ class KeywordIndex:
         cursor.execute("DELETE FROM metadata")
         self._get_connection().commit()
         logger.info("✅ 索引已清空")
-    
+
     def close(self) -> None:
         """关闭数据库连接，清理线程本地资源"""
         # 关闭主连接
@@ -335,7 +335,7 @@ class KeywordIndex:
             except Exception as e:
                 logger.warning(f"关闭主连接时出错：{e}")
             self.conn = None
-        
+
         # 清理线程本地连接
         if hasattr(self._local, 'conn') and self._local.conn:
             try:
@@ -343,10 +343,10 @@ class KeywordIndex:
             except Exception as e:
                 logger.warning(f"关闭线程本地连接时出错：{e}")
             self._local.conn = None
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
@@ -357,10 +357,10 @@ if __name__ == "__main__":
     test_db = os.path.expanduser("~/.local/share/secondbrain/test_keyword_index.db")
     if os.path.exists(test_db):
         os.remove(test_db)
-    
+
     # 创建测试索引
     index = KeywordIndex(test_db)
-    
+
     # 添加测试文档
     test_docs = [
         {
@@ -385,25 +385,25 @@ if __name__ == "__main__":
             'end_line': 2
         }
     ]
-    
+
     for doc in test_docs:
         index.add(**doc)
-    
+
     print("✅ 测试文档已添加")
-    
+
     # 搜索测试
     print("\n🔍 搜索测试：'机器学习'")
     results = index.search('机器学习', top_k=5)
     for i, result in enumerate(results, 1):
         print(f"{i}. {result['file_path']} (行 {result['start_line']}-{result['end_line']})")
         print(f"   内容：{result['content'][:80]}...")
-    
+
     print("\n🔍 搜索测试：'人工智能'")
     results = index.search('人工智能', top_k=5)
     for i, result in enumerate(results, 1):
         print(f"{i}. {result['file_path']} (行 {result['start_line']}-{result['end_line']})")
         print(f"   内容：{result['content'][:80]}...")
-    
+
     # 统计信息
     print("\n📊 索引统计")
     stats = index.get_stats()
@@ -411,5 +411,5 @@ if __name__ == "__main__":
     print(f"文件数量：{stats['file_count']}")
     print(f"总大小：{stats['total_size_mb']:.2f} MB")
     print(f"数据库大小：{stats['db_size_mb']:.2f} MB")
-    
+
     index.close()

@@ -115,11 +115,11 @@ class QueryCache:
             **kwargs: 关键字参数
         """
         key = self._generate_key(*args, **kwargs)
-        
+
         # 如果缓存已满，删除最旧的条目
         if len(self._cache) >= self.max_size:
             self._evict_oldest()
-        
+
         # 设置缓存
         entry = CacheEntry(
             key=key,
@@ -182,7 +182,6 @@ def get_cache(max_size: int = 1000, default_ttl: int = 3600) -> QueryCache:
 
     return _global_cache
 
-
     def cached(ttl: int = 3600, key_prefix: str = ""):
         """
         缓存装饰器
@@ -212,7 +211,7 @@ def get_cache(max_size: int = 1000, default_ttl: int = 3600) -> QueryCache:
 
                 # 存入缓存
                 cache.set(result, *cache_key, ttl=ttl)
-                
+
                 return result
 
             return wrapper

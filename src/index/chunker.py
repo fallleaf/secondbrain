@@ -15,6 +15,8 @@ from typing import List, Optional, Dict, Any, Tuple
 # -----------------------------
 # Data Structure
 # -----------------------------
+
+
 @dataclass
 class Chunk:
     content: str
@@ -37,6 +39,8 @@ class Chunk:
 # -----------------------------
 # Chunker
 # -----------------------------
+
+
 class SemanticChunker:
     # Precompile regex for performance
     HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.*)$')
@@ -50,7 +54,7 @@ class SemanticChunker:
     ):
         """
         Initialize the SemanticChunker.
-        
+
         Args:
             max_chars: Maximum characters per chunk.
             overlap: Number of overlapping characters between chunks.
@@ -71,12 +75,12 @@ class SemanticChunker:
     ) -> List[Chunk]:
         """
         Split text content into semantic chunks based on Markdown structure.
-        
+
         Args:
             file_path: Path to the source file (for metadata).
             content: The raw text content to chunk.
             metadata: Optional additional metadata to attach to each chunk.
-            
+
         Returns:
             List of Chunk objects.
         """
@@ -85,23 +89,23 @@ class SemanticChunker:
 
         file_checksum = self._sha256(content)
         lines = content.split("\n")
-        
+
         # Parse structure with line numbers
         sections = self._parse_markdown_structure(lines)
-        
+
         chunks: List[Chunk] = []
         chunk_index = 0
 
         for sec in sections:
             sec_content = sec["content"]
             sec_start_line = sec["start_line"]
-            
+
             if not sec_content.strip():
                 continue
 
             # Split section into sub-chunks with line tracking
             sub_chunks_info = self._split_section_with_lines(
-                sec_content, 
+                sec_content,
                 sec_start_line
             )
 
@@ -158,13 +162,13 @@ class SemanticChunker:
     def _parse_markdown_structure(self, lines: List[str]) -> List[Dict[str, Any]]:
         """
         Parse markdown headers to create hierarchical sections with line numbers.
-        
+
         Returns:
             List of section dicts containing title, path, content (str), start_line, end_line.
         """
         sections: List[Dict[str, Any]] = []
         stack: List[str] = []
-        
+
         current = {
             "title": "root",
             "path": "",
@@ -172,13 +176,13 @@ class SemanticChunker:
             "start_line": 0,
             "end_line": 0
         }
-        
+
         # Track the line index where current section started collecting content
-        content_start_idx = 0 
+        content_start_idx = 0
 
         for idx, line in enumerate(lines):
             match = self.HEADING_PATTERN.match(line)
-            
+
             if match:
                 # Flush previous section if it has content
                 if current["content_lines"]:
@@ -189,32 +193,32 @@ class SemanticChunker:
                         "start_line": current["start_line"],
                         "end_line": current["end_line"]
                     })
-                
+
                 # Update hierarchy stack
                 level = len(match.group(1))
                 title = match.group(2).strip()
-                
+
                 # Adjust stack to correct level
                 # Ensure stack doesn't grow too fast if levels are skipped (e.g., h1 -> h3)
                 if level > len(stack) + 1:
                     level = len(stack) + 1
-                
+
                 stack = stack[:level - 1]
                 stack.append(title)
-                
+
                 # Reset current section
                 current = {
                     "title": title,
                     "path": " > ".join(stack),
                     "content_lines": [],
-                    "start_line": idx, # Section starts at header line
+                    "start_line": idx,  # Section starts at header line
                     "end_line": idx
                 }
-                content_start_idx = idx + 1 # Content starts after header
+                content_start_idx = idx + 1  # Content starts after header
             else:
                 # Add line to current section content
                 if not current["content_lines"]:
-                    current["start_line"] = idx # Update start line if first content line
+                    current["start_line"] = idx  # Update start line if first content line
                 current["content_lines"].append(line)
                 current["end_line"] = idx
 
@@ -227,7 +231,7 @@ class SemanticChunker:
                 "start_line": current["start_line"],
                 "end_line": current["end_line"]
             })
-            
+
         # Handle case where file has no headers (everything is root)
         if not sections and lines:
             sections.append({
@@ -244,34 +248,34 @@ class SemanticChunker:
     # Semantic Split with Line Tracking
     # -----------------------------
     def _split_section_with_lines(
-        self, 
-        text: str, 
+        self,
+        text: str,
         section_start_line: int
     ) -> List[Dict[str, Any]]:
         """
         Split section text into chunks while tracking line numbers.
-        
+
         Returns:
             List of dicts with 'content', 'start_line', 'end_line'.
         """
         # Split by sentences
         sentences = self.SENTENCE_PATTERN.split(text)
-        sentences = [s for s in sentences if s.strip()] # Remove empty strings
-        
+        sentences = [s for s in sentences if s.strip()]  # Remove empty strings
+
         if not sentences:
             return []
 
         chunks_info = []
         current_text = ""
         current_lines_count = 0
-        
+
         # To track lines accurately, we count newlines in the accumulated text
         # This is an approximation but robust enough for most cases
         # Precise mapping requires original line indices which is complex after joining
-        
+
         for sent in sentences:
             sent_len = len(sent)
-            
+
             # Check if adding this sentence exceeds max_chars
             if len(current_text) + sent_len <= self.max_chars:
                 current_text += sent
@@ -281,17 +285,17 @@ class SemanticChunker:
                 if current_text.strip():
                     chunks_info.append({
                         "content": current_text.strip(),
-                        "start_line": section_start_line, # Approximate start
+                        "start_line": section_start_line,  # Approximate start
                         "end_line": section_start_line + current_lines_count
                     })
-                
+
                 # Handle Overlap
                 # Take the last 'overlap' chars from previous chunk as start of new chunk
                 overlap_text = ""
                 if len(current_text) > self.overlap:
                     overlap_text = current_text[-self.overlap:]
                     # Try to cut at sentence boundary within overlap if possible (simplified)
-                
+
                 current_text = overlap_text + sent
                 # Recalculate line count for the new buffer
                 current_lines_count = current_text.count('\n')
@@ -303,7 +307,7 @@ class SemanticChunker:
                 "start_line": section_start_line,
                 "end_line": section_start_line + current_lines_count
             })
-            
+
         return chunks_info
 
     # -----------------------------
@@ -316,6 +320,7 @@ class SemanticChunker:
     def _sha256(self, text: str) -> str:
         """Calculate SHA256 hash of text."""
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
 
 # -----------------------------
 # Compatibility Alias

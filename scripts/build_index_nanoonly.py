@@ -3,6 +3,11 @@
 只处理 NanobotMemory vault 的索引构建脚本
 """
 
+from src.tools.adaptive_chunker import AdaptiveChunker
+from fastembed import TextEmbedding
+import sqlite_vec
+import sqlite3
+import numpy as np
 import os
 import sys
 import json
@@ -11,13 +16,6 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-import numpy as np
-import sqlite3
-import sqlite_vec
-from fastembed import TextEmbedding
-
-from src.tools.adaptive_chunker import AdaptiveChunker
 
 
 def build_index(vault_path: str, db_path: str, model_name: str = "BAAI/bge-small-zh-v1.5"):
@@ -159,7 +157,7 @@ def build_index(vault_path: str, db_path: str, model_name: str = "BAAI/bge-small
     print(f" - 错误文件：{error_count}")
     print(f" - 总块数：{total_chunks}")
     print(f" - 耗时：{elapsed:.2f} 秒")
-    print(f" - 平均速度：{len(filtered_files)/elapsed:.1f} 文件/秒")
+    print(f" - 平均速度：{len(filtered_files) / elapsed:.1f} 文件/秒")
 
     print(f"\n📊 文档类型分布:")
     for doc_type, count in sorted(doc_type_stats.items(), key=lambda x: x[1], reverse=True):
@@ -169,9 +167,9 @@ def build_index(vault_path: str, db_path: str, model_name: str = "BAAI/bge-small
 if __name__ == "__main__":
     vault_path = os.path.expanduser("~/NanobotMemory")
     db_path = os.path.expanduser("~/.local/share/secondbrain/semantic_index.db")
-    
-    print(f"\n{'='*60}")
+
+    print(f"\n{'=' * 60}")
     print(f"📂 只处理 Vault: NanobotMemory ({vault_path})")
-    print(f"{'='*60}\n")
-    
+    print(f"{'=' * 60}\n")
+
     build_index(vault_path, db_path)

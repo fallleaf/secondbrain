@@ -6,6 +6,13 @@ SecondBrain 索引构建脚本（使用 SemanticChunker 智能分块）
 使用 fastembed (轻量级，无需 GPU) 和 SemanticChunker 智能分块
 """
 
+from src.index.semantic_index import SemanticIndex
+from src.index.chunker import SemanticChunker
+from src.config.settings import load_config
+from fastembed import TextEmbedding
+import sqlite_vec
+import sqlite3
+import numpy as np
 import os
 import sys
 import json
@@ -15,15 +22,6 @@ from typing import List, Dict, Any, Optional
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-import numpy as np
-import sqlite3
-import sqlite_vec
-from fastembed import TextEmbedding
-
-from src.config.settings import load_config
-from src.index.chunker import SemanticChunker
-from src.index.semantic_index import SemanticIndex
 
 
 def extract_frontmatter(content: str) -> Dict[str, Any]:
@@ -223,14 +221,14 @@ def build_index(vault_path: str, db_path: str, model_name: str = "BAAI/bge-small
     # 完成
     elapsed = time.time() - start_time
     print()
-    print("="*60)
+    print("=" * 60)
     print("✅ 索引构建完成！")
     print(f" - 成功：{success_count} 文件")
     print(f" - 错误：{error_count} 文件")
     print(f" - 总块数：{total_chunks}")
     print(f" - 耗时：{elapsed:.1f} 秒")
-    print(f" - 平均速度：{len(filtered_files)/elapsed:.1f} 文件/秒")
-    print("="*60)
+    print(f" - 平均速度：{len(filtered_files) / elapsed:.1f} 文件/秒")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
@@ -275,9 +273,9 @@ if __name__ == "__main__":
 
     # 依次构建每个 Vault 的索引
     for i, vault in enumerate(vaults_to_build, 1):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"正在处理 Vault {i}/{len(vaults_to_build)}: {vault.name}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         # 确定数据库路径
         if hasattr(vault, 'index') and vault.index and hasattr(vault.index, 'semantic_db') and vault.index.semantic_db:
@@ -295,6 +293,6 @@ if __name__ == "__main__":
 
         build_index(vault_path, db_path, args.model, args.append)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"✅ 所有 Vault 索引构建完成！")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")

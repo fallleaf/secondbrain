@@ -16,11 +16,13 @@ except ImportError:
     def get_cache():
         return None
 
+
 class SearchMode(str, Enum):
     """搜索模式"""
     HYBRID = "hybrid"
     SEMANTIC = "semantic"
     KEYWORD = "keyword"
+
 
 @dataclass
 class SearchResult:
@@ -51,9 +53,11 @@ class SearchResult:
         """获取完整的 Frontmatter 信息"""
         return self.metadata.get("frontmatter", self.metadata)
 
+
 class HybridRetriever:
     """混合检索器"""
-    def __init__(self, keyword_index, semantic_index, priority_classifier=None, 
+
+    def __init__(self, keyword_index, semantic_index, priority_classifier=None,
                  tag_weights: Optional[Dict[str, float]] = None,
                  vault_path: Optional[str] = None):
         """
@@ -79,7 +83,7 @@ class HybridRetriever:
         # 文档类型权重配置
         self.doc_type_weights = {
             "faq": 1.2,      # FAQ 类文档稍微提权
-            "technical": 1.1, # 技术文档稍微提权
+            "technical": 1.1,  # 技术文档稍微提权
             "legal": 1.3,     # 法律文档重要
             "default": 1.0
         }
@@ -89,19 +93,19 @@ class HybridRetriever:
     def _load_file_content(self, file_path: str, start_line: int, end_line: int) -> str:
         """
         通用文件内容读取逻辑，用于确保关键词和语义搜索结果的一致性 (技术要求 2 & 3)
-        
+
         Args:
             file_path: 相对文件路径
             start_line: 起始行号 (1-based)
             end_line: 结束行号 (1-based)
-            
+
         Returns:
             str: 文件内容片段或错误信息
         """
         content = ""
         # 1. 拼接绝对路径 (技术要求 2.2)
         full_path = os.path.join(self.vault_path, file_path) if self.vault_path else file_path
-        
+
         # 2. 检查文件是否存在
         if self.vault_path and os.path.exists(full_path):
             try:
@@ -133,7 +137,7 @@ class HybridRetriever:
         else:
             # 文件不存在提示 (技术要求 2.3)
             content = f"[文件不存在：{full_path}]"
-            
+
         return content
 
     def _calculate_dynamic_weight(self, result: SearchResult) -> float:
@@ -147,7 +151,7 @@ class HybridRetriever:
             float: 权重系数
         """
         weight = 1.0
-        
+
         # 1. 基于 tags 提权
         tags = result.get_tags()
         for tag in tags:
@@ -155,12 +159,12 @@ class HybridRetriever:
             tag_key = tag.replace("#", "").lower()
             if tag_key in self.tag_weights:
                 weight *= self.tag_weights[tag_key]
-        
+
         # 2. 基于 doc_type 提权
         doc_type = result.get_doc_type()
         if doc_type in self.doc_type_weights:
             weight *= self.doc_type_weights[doc_type]
-        
+
         # 3. 基于 frontmatter 中的 priority 字段
         frontmatter = result.get_frontmatter()
         if "priority" in frontmatter:
@@ -169,7 +173,7 @@ class HybridRetriever:
                 weight *= 1.5
             elif priority == "medium":
                 weight *= 1.2
-        
+
         return weight
 
     def search(self, query: str, mode: SearchMode = SearchMode.HYBRID,
@@ -191,23 +195,23 @@ class HybridRetriever:
     def _cached_search(self, query: str, mode: SearchMode, top_k: int, priority_weight: float) -> List[SearchResult]:
         """带缓存的搜索实现"""
         cache = get_cache()
-        
+
         # 生成缓存键
         cache_key = ("hybrid_search", query, str(mode), top_k, priority_weight)
-        
+
         # 尝试从缓存获取
         if cache:
             cached_result = cache.get(*cache_key)
             if cached_result is not None:
                 return cached_result
-        
+
         #  执行实际搜索
         results = self._perform_search(query, mode, top_k, priority_weight)
-        
+
         # 存入缓存 (5 分钟过期)
         if cache:
             cache.set(results, *cache_key, ttl=300)
-        
+
         return results
 
     def _perform_search(self, query: str, mode: SearchMode, top_k: int, priority_weight: float) -> List[SearchResult]:
@@ -251,12 +255,12 @@ class HybridRetriever:
             # 应用优先级加权 (RRF 分数越小越好，所以取倒数)
             rank = item.get('rank', 0)
             weighted_score = (1.0 / (rank + 1.0)) * weight
-            
+
             # 提取路径和行号信息
             file_path = item.get('file_path', '')
             start_line = item.get('start_line', 0)
             end_line = item.get('end_line', 0)
-            
+
             # 使用统一的文件读取逻辑获取内容 (确保与语义检索对称)
             # 即使 keyword_index 可能包含 content，为了路径正确性，我们优先尝试读取文件
             content = self._load_file_content(file_path, start_line, end_line)
@@ -272,6 +276,7 @@ class HybridRetriever:
                 metadata=item
             ))
         return results
+
 
 def _convert_semantic_results(self, semantic_results: List[Dict], priority_weight: float = 1.0) -> List[SearchResult]:
     """转换语义搜索结果 (直接使用数据库中的 content，避免文件读取错误)"""
@@ -324,7 +329,7 @@ def _convert_semantic_results(self, semantic_results: List[Dict], priority_weigh
         Args:
             results: 混合的搜索结果列表
 
-        Returns: 
+        Returns:
             List[SearchResult]: 融合后的结果，按分数降序排列
         """
         # 按来源分组
@@ -373,6 +378,7 @@ def _convert_semantic_results(self, semantic_results: List[Dict], priority_weigh
             fused_results.append(result)
 
         return fused_results
+
 
 # 测试 (技术要求 6：语法检查通过)
 if __name__ == "__main__":

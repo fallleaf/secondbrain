@@ -4,6 +4,12 @@ SecondBrain MCP 服务器
 基于 FastMCP 的 MCP 服务器实现
 """
 
+from src.tools.index_mgmt import IndexManager
+from src.tools.secondbrain_tools import SecondBrainTools
+from src.config.settings import load_config, Settings
+from mcp.types import Tool, TextContent
+from mcp.server.stdio import stdio_server
+from mcp.server import Server
 import asyncio
 import sys
 import json
@@ -13,18 +19,10 @@ from typing import Optional
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
-
-from src.config.settings import load_config, Settings
-from src.tools.secondbrain_tools import SecondBrainTools
-from src.tools.index_mgmt import IndexManager
-
 
 class SecondBrainServer:
     """SecondBrain MCP 服务器"""
-    
+
     def __init__(self, config_path: Optional[str] = None):
         """
         初始化服务器
@@ -42,13 +40,13 @@ class SecondBrainServer:
 
         # 注册工具
         self._register_tools()
-    
+
     def _load_config(self) -> None:
         """加载配置"""
         print("📝 加载配置...")
         self.config = load_config(self.config_path)
         print("✅ 配置加载成功")
-    
+
     def _init_components(self) -> None:
         """初始化组件"""
         print("\n🔧 初始化组件...")
@@ -58,7 +56,7 @@ class SecondBrainServer:
         self.index_manager = IndexManager(self.config)
 
         print("✅ 组件初始化完成")
-    
+
     def _register_tools(self) -> None:
         """注册 MCP 工具"""
 
@@ -324,7 +322,7 @@ class SecondBrainServer:
                     }
                 )
             ]
-        
+
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             """调用工具"""
@@ -378,7 +376,14 @@ class SecondBrainServer:
                 if isinstance(result, str):
                     return [TextContent(type="text", text=result)]
                 elif isinstance(result, list):
-                    return [TextContent(type="text", text=r) if isinstance(r, str) else TextContent(type="text", text=str(r)) for r in result]
+                    return [
+                        TextContent(
+                            type="text",
+                            text=r) if isinstance(
+                            r,
+                            str) else TextContent(
+                            type="text",
+                            text=str(r)) for r in result]
                 else:
                     return [TextContent(type="text", text=str(result))]
 
@@ -390,7 +395,7 @@ async def main():
     """主函数"""
     # 创建服务器
     server = SecondBrainServer()
-    
+
     # 运行服务器
     async with stdio_server() as (read_stream, write_stream):
         await server.server.run(

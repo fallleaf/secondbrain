@@ -12,11 +12,11 @@ import yaml
 
 class PriorityClassifier:
     """优先级分类器"""
-    
+
     def __init__(self, config_path: Optional[str] = None):
         """
         初始化优先级分类器
-        
+
         Args:
             config_path: 优先级配置文件路径
         """
@@ -24,17 +24,17 @@ class PriorityClassifier:
         self.config_path = os.path.expanduser(self.config_path)
         self.config: Optional[Dict] = None
         self._load_config()
-    
+
     def _load_config(self) -> None:
         """加载优先级配置"""
         if not os.path.exists(self.config_path):
             # 如果配置文件不存在，使用默认配置
             self.config = self._get_default_config()
             return
-        
+
         with open(self.config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
-    
+
     def _get_default_config(self) -> Dict:
         """获取默认配置"""
         return {
@@ -86,21 +86,21 @@ class PriorityClassifier:
                 "search_weight": 1.0
             }
         }
-    
+
     def infer_priority(self, file_path: str) -> Tuple[int, str, str]:
         """
         根据文件路径推断优先级
-        
+
         Args:
             file_path: 文件路径 (相对于 vault 根目录)
-            
+
         Returns:
             Tuple[int, str, str]: (优先级，来源类型，子分类)
         """
         # 标准化路径
         file_path = file_path.strip("/")
         file_path = file_path.replace("\\", "/")
-        
+
         # 获取文件所在目录
         file_dir = os.path.dirname(file_path)
 
@@ -127,22 +127,22 @@ class PriorityClassifier:
             "unknown",
             ""
         )
-    
+
     def _match_pattern(self, file_dir: str, pattern: str) -> bool:
         """
         检查目录是否匹配模式
-        
+
         Args:
             file_dir: 文件目录
             pattern: 模式 (支持 * 通配符)
-            
+
         Returns:
             bool: 是否匹配
         """
         # 将模式转换为 fnmatch 格式
         # 例如: "07.项目/国家政策/*" -> "07.项目/国家政策/*"
         pattern = pattern.replace("\\", "/")
-        
+
         # 检查是否完全匹配或前缀匹配
         if pattern.endswith("/*"):
             # 前缀匹配
@@ -151,100 +151,100 @@ class PriorityClassifier:
         else:
             # 精确匹配
             return file_dir == pattern or fnmatch.fnmatch(file_dir, pattern)
-    
+
     def _get_sub_category(self, file_dir: str, level: Dict) -> str:
         """
         获取子分类
-        
+
         Args:
             file_dir: 文件目录
             level: 优先级级别配置
-            
+
         Returns:
             str: 子分类名称
         """
         sub_categories = level.get("sub_categories", [])
-        
+
         for sub_cat in sub_categories:
             patterns = sub_cat.get("patterns", [])
             for pattern in patterns:
                 if self._match_pattern(file_dir, pattern):
                     return sub_cat.get("name", "")
-        
+
         return ""
-    
+
     def get_search_weight(self, priority: int) -> float:
         """
         获取优先级的搜索权重
-        
+
         Args:
             priority: 优先级 (1-9)
-            
+
         Returns:
             float: 搜索权重
         """
         priority_levels = self.config.get("priority_levels", [])
-        
+
         for level in priority_levels:
             if level["priority"] == priority:
                 return level.get("search_weight", 1.0)
-        
+
         # 默认权重
         return self.config.get("default") or {}.get("search_weight", 1.0)
-    
+
     def get_retention_days(self, priority: int) -> Optional[int]:
         """
         获取优先级的保留天数
-        
+
         Args:
             priority: 优先级 (1-9)
-            
+
         Returns:
             Optional[int]: 保留天数，None 表示永久保留
         """
         priority_levels = self.config.get("priority_levels", [])
-        
+
         for level in priority_levels:
             if level["priority"] == priority:
                 return level.get("retention_days")
-        
+
         # 默认保留天数
         return self.config.get("default") or {}.get("retention_days", 365)
-    
+
     def get_priority_label(self, priority: int) -> str:
         """
         获取优先级的标签
-        
+
         Args:
             priority: 优先级 (1-9)
-            
+
         Returns:
             str: 标签名称
         """
         priority_levels = self.config.get("priority_levels", [])
-        
+
         for level in priority_levels:
             if level["priority"] == priority:
                 return level.get("label", f"priority_{priority}")
-        
+
         return "unknown"
-    
+
     def get_priority_description(self, priority: int) -> str:
         """
         获取优先级的描述
-        
+
         Args:
             priority: 优先级 (1-9)
-            
+
         Returns:
             str: 描述文本
         """
         priority_levels = self.config.get("priority_levels", [])
-        
+
         for level in priority_levels:
             if level["priority"] == priority:
                 return level.get("description", "")
-        
+
         return ""
 
 
@@ -255,25 +255,25 @@ _classifier: Optional[PriorityClassifier] = None
 def get_classifier(config_path: Optional[str] = None) -> PriorityClassifier:
     """
     获取全局优先级分类器实例
-    
+
     Args:
         config_path: 配置文件路径
-        
+
     Returns:
         PriorityClassifier: 分类器实例
     """
     global _classifier
-    
+
     if _classifier is None:
         _classifier = PriorityClassifier(config_path)
-    
+
     return _classifier
 
 
 if __name__ == "__main__":
     # 测试优先级分类器
     classifier = PriorityClassifier()
-    
+
     test_paths = [
         "07.项目/国家政策/国务院文件.md",
         "05.工作/项目 A/需求文档.md",
@@ -281,15 +281,15 @@ if __name__ == "__main__":
         "02.收集/网页文章.md",
         "unknown/path/file.md",
     ]
-    
+
     print("🔍 优先级分类测试")
     print("-" * 50)
-    
+
     for path in test_paths:
         priority, source_type, sub_cat = classifier.infer_priority(path)
         weight = classifier.get_search_weight(priority)
         label = classifier.get_priority_label(priority)
-        
+
         print(f"📄 {path}")
         print(f"   优先级：{priority} ({label})")
         print(f"   来源：{source_type}")

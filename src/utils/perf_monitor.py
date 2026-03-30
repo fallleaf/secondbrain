@@ -79,7 +79,7 @@ class PerformanceMonitor:
             self.metrics[operation] = self.metrics[operation][-1000:]
 
         # 日志
-        logger.info(f"⏱️ {operation}: {elapsed*1000:.2f}ms")
+        logger.info(f"⏱️ {operation}: {elapsed * 1000:.2f}ms")
 
         # 重置
         self._start_time = None

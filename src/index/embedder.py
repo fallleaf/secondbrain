@@ -4,6 +4,7 @@ FastEmbed 嵌入模型封装
 使用 fastembed 实现轻量级、高性能的文本嵌入
 """
 
+from utils.logger import get_logger
 import os
 from typing import List, Optional, Union
 import numpy as np
@@ -11,7 +12,6 @@ import numpy as np
 # 导入日志
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -306,7 +306,7 @@ if __name__ == "__main__":
     print(f"嵌入维度：{embedder.embedding_dim}")
     print(f"形状：{embeddings.shape}")
     print(f"编码时间：{encode_time:.3f}秒")
-    print(f"平均每个文本：{encode_time/len(texts)*1000:.2f}毫秒")
+    print(f"平均每个文本：{encode_time / len(texts) * 1000:.2f}毫秒")
 
     # 测试相似度
     print("\n🔍 相似度测试")
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     sim_time = time.time() - start_time
 
     print(f"查询：{query}")
-    print(f"相似度计算时间：{sim_time*1000:.2f}毫秒")
+    print(f"相似度计算时间：{sim_time * 1000:.2f}毫秒")
     for idx, sim in results:
         print(f"  {sim:.4f}: {texts[idx]}")
 
@@ -330,6 +330,6 @@ if __name__ == "__main__":
         times.append(time.time() - start)
 
     avg_time = sum(times) / len(times)
-    print(f"5 次平均编码时间：{avg_time*1000:.2f}毫秒")
+    print(f"5 次平均编码时间：{avg_time * 1000:.2f}毫秒")
 
     print("\n✅ FastEmbed 测试完成")

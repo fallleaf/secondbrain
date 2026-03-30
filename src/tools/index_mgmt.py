@@ -118,7 +118,9 @@ class IndexManager:
                     issues.append("keyword_index: 索引文件不存在")
 
             # SemanticIndex 使用 index_path 属性，且可能是内存模式
-            if hasattr(self.semantic_index, 'index_path') and self.semantic_index.index_path and self.semantic_index.index_path != ":memory:":
+            if hasattr(
+                    self.semantic_index,
+                    'index_path') and self.semantic_index.index_path and self.semantic_index.index_path != ":memory:":
                 if not Path(self.semantic_index.index_path).exists():
                     issues.append("semantic_index: 索引文件不存在")
             elif not hasattr(self.semantic_index, 'index_path'):
@@ -133,7 +135,8 @@ class IndexManager:
             indexed_files = keyword_stats.get("file_count", 0)
 
             if indexed_files < total_files * 0.5:
-                issues.append(f"索引覆盖率过低：{indexed_files}/{total_files} ({(indexed_files / max(total_files, 1) * 100):.1f}%)")
+                issues.append(
+                    f"索引覆盖率过低：{indexed_files}/{total_files} ({(indexed_files / max(total_files, 1) * 100):.1f}%)")
 
             return {
                 "healthy": len(issues) == 0,

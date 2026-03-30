@@ -3,6 +3,7 @@
 支持 Frontmatter 显式声明 + 标题层级自适应调整
 """
 
+from index.chunker import Chunker, Chunk
 import hashlib
 import re
 import yaml
@@ -13,7 +14,6 @@ from dataclasses import dataclass, field
 # 导入基础分块器
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from index.chunker import Chunker, Chunk
 
 
 @dataclass
