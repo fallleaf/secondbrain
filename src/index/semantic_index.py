@@ -10,7 +10,12 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import sqlite_vec
 
-from ..utils.perf_monitor import get_perf_monitor
+# 修复相对导入问题
+try:
+    from ..utils.perf_monitor import get_perf_monitor
+except ImportError:
+    def get_perf_monitor():
+        return None
 
 logger = logging.getLogger(__name__)
 

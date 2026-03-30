@@ -1,0 +1,79 @@
+{
+  "source_db": "/home/fallleaf/.local/share/secondbrain/semantic_index.db",
+  "target_db": "~/.local/share/secondbrain/semantic_index.db",
+  "start_time": "2026-03-31T01:36:51.923001",
+  "steps": [
+    {
+      "step": "backup",
+      "status": "completed"
+    },
+    {
+      "step": "create_schema",
+      "status": "completed"
+    },
+    {
+      "step": "migrate_documents",
+      "status": "completed",
+      "stats": {
+        "documents": 5001,
+        "chunks": 5001,
+        "errors": 0
+      }
+    },
+    {
+      "step": "migrate_tags",
+      "status": "completed",
+      "stats": {
+        "status": "completed_in_migrate_documents"
+      }
+    },
+    {
+      "step": "migrate_vectors",
+      "status": "completed",
+      "stats": {
+        "vectors": 5001,
+        "errors": 0
+      }
+    },
+    {
+      "step": "verify",
+      "status": "completed",
+      "stats": {
+        "documents": {
+          "source": 5001,
+          "target": 5001,
+          "match": true
+        },
+        "chunks": {
+          "source": 5001,
+          "target": 5001,
+          "match": true
+        },
+        "vectors": {
+          "source": 5001,
+          "target": 5001,
+          "match": true
+        },
+        "tags": {
+          "target": 0
+        },
+        "document_tags": {
+          "target": 0
+        },
+        "frontmatter": {
+          "target": 5001
+        },
+        "views": {
+          "v_index_stats": {
+            "doc_count": 5001,
+            "chunk_count": 5001,
+            "tag_count": 0
+          }
+        },
+        "views_ok": true
+      }
+    }
+  ],
+  "end_time": "2026-03-31T01:37:09.006858",
+  "dry_run": false
+}

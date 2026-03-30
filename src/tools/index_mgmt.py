@@ -28,6 +28,8 @@ class IndexManager:
         self.config = config
         # 支持多 Vault：获取所有启用的 Vault
         self.enabled_vaults = [v for v in config.vaults if v.enabled]
+        
+        # 调试输出
 
         # 如果没有任何启用的 Vault，使用第一个
         if not self.enabled_vaults:
@@ -36,26 +38,46 @@ class IndexManager:
         # 为多 Vault 支持，为每个 vault 创建独立的索引管理器
         self.vault_indexes = {}
         for vault in self.enabled_vaults:
-            # 确定索引路径
-            if vault.index.semantic_db:
-                semantic_db_path = vault.index.semantic_db
-            else:
-                semantic_db_path = config.index.semantic.db_path
+            try:
+                # 确定索引路径
+                if vault.index.semantic_db:
+                    semantic_db_path = vault.index.semantic_db
+                else:
+                    semantic_db_path = config.index.semantic.db_path
 
-            if vault.index.keyword_db:
-                keyword_db_path = vault.index.keyword_db
-            else:
-                keyword_db_path = config.index.keyword.db_path
+                if vault.index.keyword_db:
+                    keyword_db_path = vault.index.keyword_db
+                else:
+                    keyword_db_path = config.index.keyword.db_path
 
-        self.vault_indexes[vault.name] = {
-            'keyword': KeywordIndex(keyword_db_path),
-            'semantic': SemanticIndex(semantic_db_path, dim=512),  # BAAI/bge-small-zh-v1.5 默认维度为 512
-            'filesystem': FileSystem(vault.path),
-            'path': Path(vault.path)
-        }
+                
+                kw_idx = KeywordIndex(keyword_db_path)
+                
+                sem_idx = SemanticIndex(semantic_db_path, dim=512)
+                
+                fs = FileSystem(vault.path)
+                
+                self.vault_indexes[vault.name] = {
+                    'keyword': kw_idx,
+                    'semantic': sem_idx,
+                    'filesystem': fs,
+                    'path': Path(vault.path)
+                }
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise
 
-        # 默认使用第一个 vault
-        primary_vault = self.enabled_vaults[0] if self.enabled_vaults else config.vaults[0]
+        # 默认使用第一个启用的 vault
+        if not self.enabled_vaults:
+            raise ValueError("没有启用的 Vault，请检查配置文件")
+        
+        primary_vault = self.enabled_vaults[0]
+        
+        # 确保 primary_vault 在 vault_indexes 中
+        if primary_vault.name not in self.vault_indexes:
+            raise KeyError(f"Vault '{primary_vault.name}' 未找到索引。已注册的 Vault: {list(self.vault_indexes.keys())}")
+        
         self.filesystem = self.vault_indexes[primary_vault.name]['filesystem']
         self.keyword_index = self.vault_indexes[primary_vault.name]['keyword']
         self.semantic_index = self.vault_indexes[primary_vault.name]['semantic']
