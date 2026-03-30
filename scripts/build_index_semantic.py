@@ -5,6 +5,15 @@ SecondBrain 索引构建脚本（使用 SemanticChunker 智能分块）
 将 NanobotMemory 中的所有笔记向量化并存入 SQLite 数据库
 使用 fastembed (轻量级，无需 GPU) 和 SemanticChunker 智能分块
 """
+import os
+import sys
+import json
+import time
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+
+# 添加项目路径（必须在导入之前）
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.index.semantic_index import SemanticIndex
 from src.index.chunker import SemanticChunker
@@ -13,15 +22,6 @@ from fastembed import TextEmbedding
 import sqlite_vec
 import sqlite3
 import numpy as np
-import os
-import sys
-import json
-import time
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-
-# 添加项目路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def extract_frontmatter(content: str) -> Dict[str, Any]:

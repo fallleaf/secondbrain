@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import sqlite_vec
 
-from ..utils.monitor import get_perf_monitor
+from ..utils.perf_monitor import get_perf_monitor
 
 logger = logging.getLogger(__name__)
 
