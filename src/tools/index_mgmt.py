@@ -47,12 +47,12 @@ class IndexManager:
             else:
                 keyword_db_path = config.index.keyword.db_path
 
-            self.vault_indexes[vault.name] = {
-                'keyword': KeywordIndex(keyword_db_path),
-                'semantic': SemanticIndex(semantic_db_path, dim=config.index.semantic.model.split('-')[-1] if '-' in config.index.semantic.model else 512),
-                'filesystem': FileSystem(vault.path),
-                'path': Path(vault.path)
-            }
+        self.vault_indexes[vault.name] = {
+            'keyword': KeywordIndex(keyword_db_path),
+            'semantic': SemanticIndex(semantic_db_path, dim=512),  # BAAI/bge-small-zh-v1.5 默认维度为 512
+            'filesystem': FileSystem(vault.path),
+            'path': Path(vault.path)
+        }
 
         # 默认使用第一个 vault
         primary_vault = self.enabled_vaults[0] if self.enabled_vaults else config.vaults[0]

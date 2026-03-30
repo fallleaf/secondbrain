@@ -38,7 +38,11 @@ class SecondBrainServer:
         # MCP 服务器实例
         self.server = Server("secondbrain")
 
-        # 注册工具
+        # 先加载配置和初始化组件
+        self._load_config()
+        self._init_components()
+
+        # 再注册工具
         self._register_tools()
 
     def _load_config(self) -> None:

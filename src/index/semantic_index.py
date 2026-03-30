@@ -83,7 +83,7 @@ class SemanticIndex:
         conn.commit()
         conn.close()
 
-        logger.info("Database initialized at %s (dim=%d)", self.index_path, self.dim)
+        logger.info("Database initialized at %s (dim=%d)", self.index_path, int(self.dim))
 
     def _get_conn(self) -> sqlite3.Connection:
         """获取数据库连接"""
@@ -91,6 +91,7 @@ class SemanticIndex:
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
+        conn.row_factory = sqlite3.Row  # 启用行访问
         return conn
 
     @staticmethod

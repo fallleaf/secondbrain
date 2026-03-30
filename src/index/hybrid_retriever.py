@@ -277,47 +277,46 @@ class HybridRetriever:
             ))
         return results
 
+    def _convert_semantic_results(self, semantic_results: List[Dict], priority_weight: float = 1.0) -> List[SearchResult]:
+        """转换语义搜索结果 (直接使用数据库中的 content，避免文件读取错误)"""
+        results = []
+        for result in semantic_results:
+            doc_id = result["doc_id"]
+            distance = result["distance"]
+            metadata_from_db = result["metadata"]
+            content = result.get("content", "")
+            start_line = result.get("start_line", 0)
+            end_line = result.get("end_line", 0)
 
-def _convert_semantic_results(self, semantic_results: List[Dict], priority_weight: float = 1.0) -> List[SearchResult]:
-    """转换语义搜索结果 (直接使用数据库中的 content，避免文件读取错误)"""
-    results = []
-    for result in semantic_results:
-        doc_id = result["doc_id"]
-        distance = result["distance"]
-        metadata_from_db = result["metadata"]
-        content = result.get("content", "")
-        start_line = result.get("start_line", 0)
-        end_line = result.get("end_line", 0)
+            # 距离越小越相似，转换为相似度分数
+            # 使用 1 / (1 + distance) 将距离转换为相似度
+            similarity = 1.0 / (1.0 + distance)
 
-        # 距离越小越相似，转换为相似度分数
-        # 使用 1 / (1 + distance) 将距离转换为相似度
-        similarity = 1.0 / (1.0 + distance)
+            # 解析 doc_id 获取 file_path (如果 content 为空，尝试从 doc_id 解析)
+            file_path = doc_id
+            if '#' in doc_id:
+                file_path = doc_id.rsplit('#', 1)[0]
 
-        # 解析 doc_id 获取 file_path (如果 content 为空，尝试从 doc_id 解析)
-        file_path = doc_id
-        if '#' in doc_id:
-            file_path = doc_id.rsplit('#', 1)[0]
+            # 如果 content 为空，尝试从 metadata 中获取（兼容旧数据）
+            if not content and metadata_from_db:
+                content = metadata_from_db.get("chunk_content", "")
+                if not content:
+                    # 最后尝试从 metadata 中的 file_path 读取（如果存在）
+                    meta_file_path = metadata_from_db.get("file_path", file_path)
+                    if meta_file_path != file_path:
+                        file_path = meta_file_path
 
-        # 如果 content 为空，尝试从 metadata 中获取（兼容旧数据）
-        if not content and metadata_from_db:
-            content = metadata_from_db.get("chunk_content", "")
-            if not content:
-                # 最后尝试从 metadata 中的 file_path 读取（如果存在）
-                meta_file_path = metadata_from_db.get("file_path", file_path)
-                if meta_file_path != file_path:
-                    file_path = meta_file_path
-
-        results.append(SearchResult(
-            doc_id=doc_id,
-            score=similarity * priority_weight,
-            content=content,
-            file_path=file_path,
-            start_line=start_line,
-            end_line=end_line,
-            source='semantic',
-            metadata={'distance': distance, **metadata_from_db}
-        ))
-    return results
+            results.append(SearchResult(
+                doc_id=doc_id,
+                score=similarity * priority_weight,
+                content=content,
+                file_path=file_path,
+                start_line=start_line,
+                end_line=end_line,
+                source='semantic',
+                metadata={'distance': distance, **metadata_from_db}
+            ))
+        return results
 
     def _rrf_fusion(self, results: List[SearchResult]) -> List[SearchResult]:
         """
