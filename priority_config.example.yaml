@@ -1,0 +1,57 @@
+# 优先级配置 (1-9 间隔分级)
+# 路径：~/.config/secondbrain/priority_config.yaml
+
+priority_levels:
+  - priority: 9
+    label: central_gov
+    description: 中央政府、国务院、国家级文件
+    retention_days: null  # permanent
+    search_weight: 2.0
+    path_patterns:
+      - "07.项目/国家政策/*"
+      - "08.技术/国家标准/*"
+    sub_categories:
+      - name: state_council
+        patterns: ["国务院/*", "国发/*"]
+
+  - priority: 7
+    label: ministry_gov
+    description: 部委、省级政府文件
+    retention_days: 3650  # 10 年
+    search_weight: 1.6
+    path_patterns:
+      - "07.项目/部委文件/*"
+      - "08.技术/行业标准/*"
+
+  - priority: 5
+    label: company
+    description: 公司文档、项目文件
+    retention_days: 1095  # 3 年
+    search_weight: 1.2
+    path_patterns:
+      - "05.工作/*"
+      - "07.项目/*"
+
+  - priority: 3
+    label: personal_work
+    description: 个人工作笔记
+    retention_days: 365  # 1 年
+    search_weight: 1.0
+    path_patterns:
+      - "03.日记/*"
+      - "06.学习/*"
+
+  - priority: 1
+    label: web
+    description: 网络收集、待验证信息
+    retention_days: 90
+    search_weight: 0.8
+    path_patterns:
+      - "02.收集/*"
+      - "01.闪念/*"
+
+# 默认配置
+default:
+  priority: 3
+  retention_days: 365
+  search_weight: 1.0

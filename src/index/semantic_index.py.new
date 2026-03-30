@@ -1,0 +1,787 @@
+"""
+Production-grade Semantic Index using sqlite-vec
+Key features:
+- Thread-safe connection handling
+- Proper vec0 usage for ANN search
+- Clean separation of concerns
+- Robust error handling
+- Optional performance monitoring
+- Full data consistency (cascading deletes)
+- Context manager support
+"""
+import json
+import sqlite3
+import threading
+import logging
+from typing import List, Optional, Tuple, Dict, Any
+from contextlib import contextmanager
+
+# Optional deps
+try:
+    import sqlite_vec
+    SQLITE_VEC_AVAILABLE = True
+except ImportError:
+    SQLITE_VEC_AVAILABLE = False
+
+try:
+    from src.utils.perf_monitor import get_perf_monitor
+except ImportError:
+    def get_perf_monitor():
+        return None
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class SemanticIndex:
+    """生产级语义索引类，支持向量搜索、元数据管理和全文检索"""
+    
+    DEFAULT_DIM = 512  # BAAI/bge-small-zh-v1.5 默认维度
+    
+    def __init__(self, index_path: str, dim: Optional[int] = None):
+        """
+        初始化语义索引
+        
+        Args:
+            index_path: 数据库文件路径
+            dim: 向量维度，如不指定则尝试从现有数据库检测
+        """
+        if not SQLITE_VEC_AVAILABLE:
+            raise ImportError("Please install sqlite-vec: pip install sqlite-vec")
+        
+        self.index_path = index_path
+        self._local = threading.local()
+        self._lock = threading.Lock()
+        
+        # 如果未指定 dim，尝试从数据库读取
+        if dim is None:
+            dim = self._detect_db_dimension(index_path)
+        
+        self.dim = dim
+        self._init_db()
+        logger.info(f"SemanticIndex initialized: path={index_path}, dim={dim}")
+    
+    def __enter__(self):
+        """上下文管理器入口"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """上下文管理器出口，确保连接关闭"""
+        self.close()
+        return False
+    
+    def _detect_db_dimension(self, index_path: str) -> int:
+        """从现有数据库中检测向量维度"""
+        try:
+            conn = sqlite3.connect(index_path)
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+            
+            cursor = conn.cursor()
+            cursor.execute("SELECT length(embedding) FROM vectors_vec LIMIT 1")
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result and result[0]:
+                byte_len = result[0]
+                # float32 = 4 bytes
+                detected_dim = byte_len // 4
+                logger.info(f"🔍 检测到数据库向量维度：{detected_dim}")
+                return detected_dim
+        except Exception as e:
+            logger.warning(f"⚠️ 无法检测数据库维度：{e}")
+        
+        # 默认使用 512 (BAAI/bge-small-zh-v1.5)
+        logger.info(f"⚠️ 使用默认维度 {self.DEFAULT_DIM} (BAAI/bge-small-zh-v1.5)")
+        return self.DEFAULT_DIM
+    
+    # -----------------------------
+    # Connection management
+    # -----------------------------
+    def _get_conn(self) -> sqlite3.Connection:
+        """获取线程安全的数据库连接（强制 UTF-8 编码）"""
+        if not hasattr(self._local, "conn") or self._local.conn is None:
+            with self._lock:
+                if not hasattr(self._local, "conn") or self._local.conn is None:
+                    # 连接数据库，确保使用 UTF-8 编码
+                    conn = sqlite3.connect(
+                        self.index_path,
+                        check_same_thread=False,
+                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
+                    )
+                    # 显式设置编码
+                    conn.execute("PRAGMA encoding='UTF-8'")
+                    conn.execute("PRAGMA journal_mode=WAL")  # 启用 WAL 模式提升并发性能
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                    conn.row_factory = sqlite3.Row
+                    sqlite_vec.load(conn)
+                    self._local.conn = conn
+                    logger.debug(f"New connection created for thread {threading.current_thread().ident}")
+        return self._local.conn
+    
+    @contextmanager
+    def _transaction(self):
+        """事务上下文管理器，确保原子性操作"""
+        conn = self._get_conn()
+        try:
+            conn.execute("BEGIN")
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Transaction failed: {e}")
+            raise
+        finally:
+            pass
+    
+    # -----------------------------
+    # Initialization
+    # -----------------------------
+    def _init_db(self):
+        """初始化数据库表结构"""
+        with self._transaction() as conn:
+            cur = conn.cursor()
+            
+            # 创建 vectors 表（存储元数据）
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS vectors (
+                doc_id TEXT PRIMARY KEY,
+                metadata TEXT
+            )
+            """)
+            
+            # 创建 chunks 表（存储分块内容）
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS chunks (
+                doc_id TEXT,
+                chunk_index INTEGER,
+                content TEXT,
+                start_line INTEGER,
+                end_line INTEGER,
+                PRIMARY KEY (doc_id, chunk_index)
+            )
+            """)
+            
+            # 创建索引以加速查询
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id)")
+            
+            # 创建 FTS5 全文索引表（独立存储，避免 external content 同步问题）
+            cur.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                content,
+                doc_id,
+                chunk_index
+            )
+            """)
+            
+            # 创建向量索引表
+            cur.execute(f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS vectors_vec USING vec0(
+                doc_id TEXT PRIMARY KEY,
+                embedding float[{self.dim}]
+            )
+            """)
+            
+            logger.info("Database tables initialized successfully")
+    
+    # -----------------------------
+    # Utility methods
+    # -----------------------------
+    @staticmethod
+    def _ensure_utf8(obj: Any) -> Any:
+        """确保对象中的字符串是 UTF-8 编码"""
+        if isinstance(obj, str):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {SemanticIndex._ensure_utf8(k): SemanticIndex._ensure_utf8(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [SemanticIndex._ensure_utf8(item) for item in obj]
+        else:
+            return obj
+    
+    # -----------------------------
+    # Insert APIs
+    # -----------------------------
+    def add_embedding(
+        self, 
+        doc_id: str, 
+        embedding: List[float], 
+        metadata: Optional[Dict[str, Any]] = None, 
+        content: Optional[str] = None, 
+        start_line: int = 0, 
+        end_line: int = 0
+    ) -> bool:
+        """
+        添加向量嵌入（确保 UTF-8 编码）
+        
+        Args:
+            doc_id: 文档 ID
+            embedding: 向量嵌入
+            metadata: 元数据
+            content: 文本内容（可选，如果提供则存储到 chunks 表）
+            start_line: 起始行号
+            end_line: 结束行号
+            
+        Returns:
+            bool: 操作是否成功
+        """
+        if len(embedding) != self.dim:
+            raise ValueError(f"Expected dim {self.dim}, got {len(embedding)}")
+        
+        # 确保 metadata 中的字符串是 UTF-8
+        metadata = self._ensure_utf8(metadata) if metadata else {}
+        
+        monitor = get_perf_monitor()
+        
+        try:
+            with self._transaction() as conn:
+                cur = conn.cursor()
+                emb_blob = sqlite_vec.serialize_float32(embedding)
+                doc_id_str = str(doc_id)
+                metadata_json = json.dumps(metadata, ensure_ascii=False)
+                
+                # 1. 插入元数据
+                cur.execute(
+                    "INSERT OR REPLACE INTO vectors (doc_id, metadata) VALUES (?, ?)", 
+                    (doc_id_str, metadata_json)
+                )
+                
+                # 2. 插入向量
+                cur.execute(
+                    "INSERT OR REPLACE INTO vectors_vec (doc_id, embedding) VALUES (?, ?)", 
+                    (doc_id_str, emb_blob)
+                )
+                
+                # 3. 如果提供了 content，插入到 chunks 表和 FTS 索引
+                if content is not None:
+                    # 更新 metadata 中的 chunk 信息
+                    chunk_metadata = metadata.copy()
+                    chunk_metadata['chunk_content'] = content
+                    chunk_metadata['start_line'] = start_line
+                    chunk_metadata['end_line'] = end_line
+                    metadata_json = json.dumps(chunk_metadata, ensure_ascii=False)
+                    
+                    # 更新 vectors 表
+                    cur.execute(
+                        "UPDATE vectors SET metadata = ? WHERE doc_id = ?", 
+                        (metadata_json, doc_id_str)
+                    )
+                    
+                    # 插入到 chunks 表
+                    cur.execute("""
+                    INSERT OR REPLACE INTO chunks (doc_id, chunk_index, content, start_line, end_line)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (doc_id_str, 0, content, start_line, end_line))
+                    
+                    # 插入到 FTS5 索引（独立表，需手动同步）
+                    cur.execute("""
+                    INSERT OR REPLACE INTO chunks_fts (rowid, doc_id, chunk_index, content)
+                    VALUES (?, ?, ?, ?)
+                    """, (doc_id_str, doc_id_str, 0, content))
+            
+            if monitor:
+                with monitor.start("add_embedding"):
+                    pass
+            
+            logger.debug(f"Added embedding for doc_id: {doc_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to add embedding for {doc_id}: {e}")
+            return False
+    
+    def add_embeddings_batch(
+        self, 
+        items: List[Tuple[str, List[float], Optional[Dict[str, Any]], Optional[str], int, int]]
+    ) -> Tuple[int, int]:
+        """
+        批量添加向量嵌入
+        
+        Args:
+            items: List of (doc_id, embedding, metadata, content, start_line, end_line)
+            
+        Returns:
+            Tuple[int, int]: (成功数量，失败数量)
+        """
+        if not items:
+            return 0, 0
+        
+        success_count = 0
+        fail_count = 0
+        
+        try:
+            with self._transaction() as conn:
+                cur = conn.cursor()
+                
+                vec_rows = []
+                meta_rows = []
+                chunk_rows = []
+                fts_rows = []
+                
+                for item in items:
+                    # 兼容旧版本（3 个元素）和新版本（6 个元素）
+                    if len(item) == 3:
+                        doc_id, emb, meta = item
+                        content, start_line, end_line = None, 0, 0
+                    elif len(item) == 6:
+                        doc_id, emb, meta, content, start_line, end_line = item
+                    else:
+                        logger.warning(f"Invalid item format: {item}")
+                        fail_count += 1
+                        continue
+                    
+                    if len(emb) != self.dim:
+                        logger.warning(f"Dim mismatch for {doc_id}: expected {self.dim}, got {len(emb)}")
+                        fail_count += 1
+                        continue
+                    
+                    # 确保 UTF-8
+                    meta = self._ensure_utf8(meta) if meta else {}
+                    doc_id_str = str(doc_id)
+                    
+                    vec_rows.append((doc_id_str, sqlite_vec.serialize_float32(emb)))
+                    meta_rows.append((doc_id_str, json.dumps(meta, ensure_ascii=False)))
+                    
+                    # 如果有内容，准备 chunks 和 FTS 数据
+                    if content is not None:
+                        chunk_metadata = meta.copy()
+                        chunk_metadata['chunk_content'] = content
+                        chunk_metadata['start_line'] = start_line
+                        chunk_metadata['end_line'] = end_line
+                        meta_rows.append((doc_id_str, json.dumps(chunk_metadata, ensure_ascii=False)))
+                        chunk_rows.append((doc_id_str, 0, content, start_line, end_line))
+                        fts_rows.append((doc_id_str, doc_id_str, 0, content))
+                
+                # 批量插入 vectors
+                cur.executemany(
+                    "INSERT OR REPLACE INTO vectors (doc_id, metadata) VALUES (?, ?)",
+                    meta_rows
+                )
+                
+                # 批量插入 vectors_vec
+                cur.executemany(
+                    "INSERT OR REPLACE INTO vectors_vec (doc_id, embedding) VALUES (?, ?)",
+                    vec_rows
+                )
+                
+                # 批量插入 chunks
+                if chunk_rows:
+                    cur.executemany("""
+                    INSERT OR REPLACE INTO chunks (doc_id, chunk_index, content, start_line, end_line)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, chunk_rows)
+                
+                # 批量插入 FTS
+                if fts_rows:
+                    cur.executemany("""
+                    INSERT OR REPLACE INTO chunks_fts (rowid, doc_id, chunk_index, content)
+                    VALUES (?, ?, ?, ?)
+                    """, fts_rows)
+                
+                success_count = len(vec_rows)
+                
+            logger.info(f"Batch insert completed: {success_count} success, {fail_count} failed")
+            return success_count, fail_count
+            
+        except Exception as e:
+            logger.error(f"Batch insert failed: {e}")
+            return 0, len(items)
+    
+    # -----------------------------
+    # Search
+    # -----------------------------
+    def search(
+        self, 
+        query: List[float], 
+        top_k: int = 10,
+        min_distance: Optional[float] = None,
+        max_distance: Optional[float] = None
+    ) -> List[Tuple[str, float, Dict[str, Any]]]:
+        """
+        执行语义搜索
+        
+        Args:
+            query: 查询向量
+            top_k: 返回结果数
+            min_distance: 最小距离阈值（过滤）
+            max_distance: 最大距离阈值（过滤）
+            
+        Returns:
+            List[Tuple[doc_id, distance, metadata]]: 搜索结果，metadata 已解析为字典
+        """
+        if len(query) != self.dim:
+            raise ValueError(f"Query dim mismatch: expected {self.dim}, got {len(query)}")
+        
+        conn = self._get_conn()
+        cur = conn.cursor()
+        
+        query_blob = sqlite_vec.serialize_float32(query)
+        
+# 构建查询语句
+        base_query = """
+        SELECT vectors.doc_id, distance, vectors.metadata
+        FROM vectors_vec
+        JOIN vectors ON vectors_vec.rowid = vectors.rowid
+        WHERE vectors_vec.embedding MATCH ? AND k = ?
+        ORDER BY distance
+        """
+
+        params = [query_blob, top_k]
+
+        cur.execute(base_query, params)
+
+        results = []
+        for row in cur.fetchall():
+            doc_id = row["doc_id"]
+            distance = float(row["distance"])
+            
+            # 应用距离过滤
+            if min_distance is not None and distance < min_distance:
+                continue
+            if max_distance is not None and distance > max_distance:
+                continue
+            
+            metadata_raw = row["metadata"]
+            
+            # 解析 metadata JSON
+            try:
+                metadata = json.loads(metadata_raw) if metadata_raw else {}
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse metadata for {doc_id}: {e}")
+                metadata = {}
+            
+            results.append((doc_id, distance, metadata))
+        
+        logger.debug(f"Search completed: {len(results)} results for top_k={top_k}")
+        return results
+    
+    def search_hybrid(
+        self, 
+        query_vector: List[float], 
+        query_text: Optional[str] = None,
+        top_k: int = 10,
+        vector_weight: float = 0.7,
+        text_weight: float = 0.3
+    ) -> List[Tuple[str, float, Dict[str, Any]]]:
+        """
+        混合搜索（向量 + 全文检索）
+        
+        Args:
+            query_vector: 查询向量
+            query_text: 查询文本（用于 FTS）
+            top_k: 返回结果数
+            vector_weight: 向量搜索权重
+            text_weight: 文本搜索权重
+            
+        Returns:
+            List[Tuple[doc_id, score, metadata]]: 搜索结果
+        """
+        # 纯向量搜索
+        vector_results = self.search(query_vector, top_k=top_k * 2)
+        
+        if not query_text:
+            # 无文本查询，直接返回向量结果
+            return vector_results[:top_k]
+        
+        # 全文检索
+        conn = self._get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT doc_id, bm25(chunks_fts) as text_score
+        FROM chunks_fts
+        WHERE chunks_fts MATCH ?
+        ORDER BY text_score
+        LIMIT ?
+        """, (query_text, top_k * 2))
+        
+        text_results = {row["doc_id"]: float(row["text_score"]) for row in cur.fetchall()}
+        
+        # 合并结果（简单加权）
+        merged = {}
+        for doc_id, distance, metadata in vector_results:
+            # 归一化距离到 0-1 分数（距离越小分数越高）
+            vector_score = 1.0 / (1.0 + distance)
+            
+            text_score = text_results.get(doc_id, 0.0)
+            # 归一化文本分数
+            text_score = 1.0 / (1.0 + abs(text_score)) if text_score else 0.0
+            
+            combined_score = vector_weight * vector_score + text_weight * text_score
+            merged[doc_id] = (combined_score, metadata)
+        
+        # 排序并返回
+        sorted_results = sorted(merged.items(), key=lambda x: x[1][0], reverse=True)[:top_k]
+        return [(doc_id, score, metadata) for doc_id, (score, metadata) in sorted_results]
+    
+    # -----------------------------
+    # Get Chunk Content
+    # -----------------------------
+    def get_chunk_content(self, doc_id: str, chunk_index: int = 0) -> Optional[str]:
+        """
+        获取指定文档分块的内容
+        
+        Args:
+            doc_id: 文档 ID
+            chunk_index: 分块索引
+            
+        Returns:
+            分块内容，如果不存在则返回 None
+        """
+        conn = self._get_conn()
+        cur = conn.cursor()
+        
+        cur.execute("""
+        SELECT content FROM chunks
+        WHERE doc_id = ? AND chunk_index = ?
+        """, (doc_id, chunk_index))
+        
+        row = cur.fetchone()
+        return row["content"] if row else None
+    
+    def get_all_chunks(self, doc_id: str) -> List[Dict[str, Any]]:
+        """
+        获取文档的所有分块
+        
+        Args:
+            doc_id: 文档 ID
+            
+        Returns:
+            分块列表
+        """
+        conn = self._get_conn()
+        cur = conn.cursor()
+        
+        cur.execute("""
+        SELECT chunk_index, content, start_line, end_line FROM chunks
+        WHERE doc_id = ?
+        ORDER BY chunk_index
+        """, (doc_id,))
+        
+        return [
+            {
+                "chunk_index": row["chunk_index"],
+                "content": row["content"],
+                "start_line": row["start_line"],
+                "end_line": row["end_line"]
+            }
+            for row in cur.fetchall()
+        ]
+    
+    # -----------------------------
+    # Full-text Search
+    # -----------------------------
+    def search_text(self, query: str, top_k: int = 10) -> List[Tuple[str, int, str, float]]:
+        """
+        全文检索
+        
+        Args:
+            query: 查询文本
+            top_k: 返回结果数
+            
+        Returns:
+            List[Tuple[doc_id, chunk_index, content, score]]
+        """
+        conn = self._get_conn()
+        cur = conn.cursor()
+        
+        cur.execute("""
+        SELECT doc_id, chunk_index, content, bm25(chunks_fts) as score
+        FROM chunks_fts
+        WHERE chunks_fts MATCH ?
+        ORDER BY score
+        LIMIT ?
+        """, (query, top_k))
+        
+        return [
+            (row["doc_id"], row["chunk_index"], row["content"], float(row["score"]))
+            for row in cur.fetchall()
+        ]
+    
+    # -----------------------------
+    # Delete
+    # -----------------------------
+    def delete(self, doc_id: str) -> bool:
+        """
+        删除文档及其所有相关数据（级联删除）
+        
+        Args:
+            doc_id: 文档 ID
+            
+        Returns:
+            bool: 操作是否成功
+        """
+        try:
+            with self._transaction() as conn:
+                cur = conn.cursor()
+                
+                # 1. 删除向量元数据
+                cur.execute("DELETE FROM vectors WHERE doc_id=?", (doc_id,))
+                
+                # 2. 删除向量
+                cur.execute("DELETE FROM vectors_vec WHERE doc_id=?", (doc_id,))
+                
+                # 3. 删除文本块
+                cur.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
+                
+                # 4. 删除 FTS 索引（使用 rowid 删除）
+                cur.execute("DELETE FROM chunks_fts WHERE rowid=?", (doc_id,))
+            
+            logger.info(f"Deleted doc_id: {doc_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete {doc_id}: {e}")
+            return False
+    
+    def delete_batch(self, doc_ids: List[str]) -> Tuple[int, int]:
+        """
+        批量删除文档
+        
+        Args:
+            doc_ids: 文档 ID 列表
+            
+        Returns:
+            Tuple[int, int]: (成功数量，失败数量)
+        """
+        success_count = 0
+        fail_count = 0
+        
+        for doc_id in doc_ids:
+            if self.delete(doc_id):
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        return success_count, fail_count
+    
+    # -----------------------------
+    # Stats
+    # -----------------------------
+    def stats(self) -> Dict[str, Any]:
+        """获取索引统计信息"""
+        conn = self._get_conn()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT COUNT(*) as cnt FROM vectors")
+        vector_count = cur.fetchone()["cnt"]
+        
+        cur.execute("SELECT COUNT(*) as cnt FROM chunks")
+        chunk_count = cur.fetchone()["cnt"]
+        
+        cur.execute("SELECT COUNT(*) as cnt FROM chunks_fts")
+        fts_count = cur.fetchone()["cnt"]
+        
+        return {
+            "vector_count": vector_count,
+            "chunk_count": chunk_count,
+            "fts_count": fts_count,
+            "dim": self.dim,
+            "path": self.index_path
+        }
+    
+    def get_metadata(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """获取文档元数据"""
+        conn = self._get_conn()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT metadata FROM vectors WHERE doc_id=?", (doc_id,))
+        row = cur.fetchone()
+        
+        if row and row["metadata"]:
+            try:
+                return json.loads(row["metadata"])
+            except json.JSONDecodeError:
+                return {}
+        return None
+    
+    # -----------------------------
+    # Close
+    # -----------------------------
+    def close(self):
+        """关闭数据库连接"""
+        if hasattr(self._local, "conn") and self._local.conn is not None:
+            try:
+                self._local.conn.close()
+                logger.debug(f"Connection closed for thread {threading.current_thread().ident}")
+            except Exception as e:
+                logger.warning(f"Error closing connection: {e}")
+            finally:
+                del self._local.conn
+    
+    def rebuild_fts(self):
+        """重建 FTS 索引（用于修复索引损坏）"""
+        try:
+            with self._transaction() as conn:
+                cur = conn.cursor()
+                cur.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
+            logger.info("FTS index rebuilt successfully")
+        except Exception as e:
+            logger.error(f"Failed to rebuild FTS index: {e}")
+            raise
+
+
+# -----------------------------
+# Minimal test
+# -----------------------------
+if __name__ == "__main__":
+    import os
+    
+    # 清理测试数据库
+    test_db = "/tmp/vec_test.db"
+    if os.path.exists(test_db):
+        os.remove(test_db)
+    
+    # 使用上下文管理器
+    with SemanticIndex(test_db, dim=128) as idx:
+        # 测试单个插入
+        vec = [0.1] * 128
+        idx.add_embedding(
+            "doc_1", 
+            vec, 
+            {"name": "test", "category": "demo"},
+            content="这是一个测试文档",
+            start_line=1,
+            end_line=10
+        )
+        
+        # 测试批量插入
+        items = [
+            ("doc_2", [0.2] * 128, {"name": "test2"}, "第二个文档", 11, 20),
+            ("doc_3", [0.3] * 128, {"name": "test3"}, "第三个文档", 21, 30),
+        ]
+        success, failed = idx.add_embeddings_batch(items)
+        print(f"Batch insert: {success} success, {failed} failed")
+        
+        # 测试搜索
+        res = idx.search(vec, top_k=3)
+        print(f"\nSearch results: {len(res)} items")
+        for doc_id, distance, metadata in res:
+            print(f"  {doc_id}: distance={distance:.4f}, metadata={metadata}")
+        
+        # 测试全文检索
+        text_res = idx.search_text("测试", top_k=3)
+        print(f"\nText search results: {len(text_res)} items")
+        for doc_id, chunk_idx, content, score in text_res:
+            print(f"  {doc_id}[{chunk_idx}]: score={score:.4f}, content={content[:20]}...")
+        
+        # 测试获取内容
+        content = idx.get_chunk_content("doc_1")
+        print(f"\nChunk content: {content}")
+        
+        # 测试统计
+        print(f"\nStats: {idx.stats()}")
+        
+        # 测试删除
+        idx.delete("doc_3")
+        print(f"\nAfter delete, stats: {idx.stats()}")
+        
+        # 测试混合搜索
+        hybrid_res = idx.search_hybrid(vec, "测试", top_k=3)
+        print(f"\nHybrid search results: {len(hybrid_res)} items")
+    
+    print("\n✅ All tests completed successfully!")

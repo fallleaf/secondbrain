@@ -1,0 +1,28 @@
+# MCP 框架
+mcp>=1.0.0
+fastmcp>=0.1.0
+
+# 向量化
+fastembed>=0.8.0
+sqlite-vec>=0.1.7
+
+# 关键词索引
+rank-bm25>=0.2.2
+
+# 文本处理
+pyyaml>=6.0
+frontmatter>=1.0.0
+markdown>=3.4.0
+
+# 文件监控
+watchdog>=3.0.0
+
+# 工具
+pydantic>=2.0.0
+httpx>=0.24.0
+aiofiles>=23.0.0
+
+# 测试 (开发依赖)
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# pytest-cov>=4.0.0

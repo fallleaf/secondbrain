@@ -1,0 +1,46 @@
+[
+  {
+    "test": "FastEmbed 可用性",
+    "success": true,
+    "message": "fastembed 0.8.0 已安装",
+    "details": {
+      "version": "0.8.0"
+    }
+  },
+  {
+    "test": "SentenceTransformers 可用性",
+    "success": false,
+    "message": "sentence-transformers 未安装：No module named 'sentence_transformers'",
+    "details": {
+      "error": "No module named 'sentence_transformers'"
+    }
+  },
+  {
+    "test": "FastEmbed 模型加载",
+    "success": true,
+    "message": "模型加载成功",
+    "details": {
+      "加载时间": "0.00秒",
+      "嵌入维度": 512
+    }
+  },
+  {
+    "test": "FastEmbed 编码性能",
+    "success": true,
+    "message": "编码成功",
+    "details": {
+      "小批量 (10 条)": "1192.91毫秒",
+      "大批量 (100 条)": "964.15毫秒",
+      "平均每条": "9.64毫秒",
+      "输出形状": "(100, 512)"
+    }
+  },
+  {
+    "test": "内存占用对比",
+    "success": false,
+    "message": "测试失败：sentence-transformers 未安装。请运行: pip install sentence-transformers",
+    "details": {
+      "error": "sentence-transformers 未安装。请运行: pip install sentence-transformers"
+    }
+  }
+]

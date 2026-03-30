@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv/
+
+# 临时文件
+tmp/
+*.tmp
+*.log
+*.bak
+*.swp
+*.swo
+*~
+
+# 数据库
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.iml
+*.ipr
+*.iws
+
+# 测试覆盖
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# 日志
+*.log
+logs/
+
+# 配置文件 (敏感信息)
+*.yaml.bak
+*.yml.bak
+.env
+.env.local
+config.local.yaml
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 构建产物
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt

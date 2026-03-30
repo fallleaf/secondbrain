@@ -1,0 +1,456 @@
+"""
+语义索引模块
+
+使用 sqlite-vec 实现向量索引和相似度搜索
+支持可配置的向量维度（默认 512，对应 BAAI/bge-small-zh-v1.5）
+"""
+
+import os
+import json
+import sqlite3
+import hashlib
+import time
+import threading
+from typing import List, Optional, Tuple, Dict, Any
+
+# 导入日志
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# 尝试导入性能监控
+try:
+    from src.utils.perf_monitor import get_perf_monitor
+except ImportError:
+    # 测试环境下的回退
+    def get_perf_monitor():
+        return None
+
+# 尝试导入 sqlite-vec
+try:
+    import sqlite_vec
+    SQLITE_VEC_AVAILABLE = True
+except ImportError:
+    SQLITE_VEC_AVAILABLE = False
+
+
+class SemanticIndex:
+    """sqlite-vec 语义索引"""
+
+    def __init__(self, index_path: Optional[str] = None, dim: int = 1536):
+        """
+        初始化语义索引
+
+        Args:
+            index_path: 索引文件路径 (可选)
+            dim: 向量维度 (默认 1536，对应 BAAI/bge-small-zh-v1.5 或其他模型)
+        """
+        if not SQLITE_VEC_AVAILABLE:
+            raise ImportError(
+                "sqlite-vec 未安装，请运行：pip install sqlite-vec"
+            )
+
+        self.index_path = index_path or ":memory:"
+        self.dim = dim
+        self.doc_mapping: Dict[str, Dict[str, Any]] = {}  # doc_id -> doc_info 映射
+        self._conn: Optional[sqlite3.Connection] = None
+        self._local = threading.local()  # 线程本地存储用于多线程安全
+
+        # 加载或创建索引
+        self._load_or_create_index()
+    
+    def _get_connection(self) -> sqlite3.Connection:
+        """获取线程安全的数据库连接"""
+        if not hasattr(self._local, 'conn') or self._local.conn is None:
+            self._local.conn = sqlite3.connect(self.index_path)
+            self._local.conn.row_factory = sqlite3.Row
+            sqlite_vec.load(self._local.conn)
+        return self._local.conn
+
+    def _load_or_create_index(self) -> None:
+        """加载或创建 sqlite-vec 索引"""
+        is_new = self.index_path == ":memory:" or not os.path.exists(self.index_path)
+
+        # 创建数据库连接
+        self._conn = sqlite3.connect(self.index_path)
+        self._conn.row_factory = sqlite3.Row
+
+        # 加载 sqlite-vec 扩展
+        sqlite_vec.load(self._conn)
+
+        cursor = self._get_connection().cursor()
+
+        if is_new or not os.path.exists(self.index_path):
+            # 创建新的索引表
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS vectors (
+                    doc_id TEXT PRIMARY KEY,
+                    embedding F32_BLOB({self.dim}),
+                    metadata TEXT
+                )
+            """)
+
+            # 创建向量索引（使用 sqlite-vec 的自动索引）
+            cursor.execute(f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS vectors_vec USING vec0(
+                    embedding float[{self.dim}]
+                )
+            """)
+
+            # 加载现有文档映射（如果存在）
+            if self.index_path != ":memory:" and os.path.exists(self.index_path + '.mapping.json'):
+                self._load_doc_mapping()
+        else:
+            # 检查表是否存在
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='vectors'
+            """)
+            if not cursor.fetchone():
+                # 表不存在，创建新表
+                cursor.execute(f"""
+                    CREATE TABLE vectors (
+                        doc_id TEXT PRIMARY KEY,
+                        embedding F32_BLOB({self.dim}),
+                        metadata TEXT
+                    )
+                """)
+                cursor.execute(f"""
+                    CREATE VIRTUAL TABLE vectors_vec USING vec0(
+                        embedding float[{self.dim}]
+                    )
+                """)
+
+            # 加载现有文档映射
+            self._load_doc_mapping()
+
+        self._get_connection().commit()
+
+    def add_text(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        添加文本到索引（自动分块和向量化）
+
+        Args:
+            doc_id: 文档 ID
+            text: 文档内容
+            metadata: 元数据
+        """
+        monitor = get_perf_monitor()
+
+with monitor.start("add_text"):
+    # 分块 - 使用自适应分块器
+    from tools.adaptive_chunker import AdaptiveChunker
+    chunker = AdaptiveChunker()
+    chunks_obj = chunker.chunk_file(doc_id, text, metadata)
+    chunks = [c.content for c in chunks_obj]
+
+    if not chunks:
+        
+            logger.warning(f"⚠️ 无有效块：{doc_id}")
+            return
+
+    # 向量化
+    from .embedder import Embedder
+    embedder = Embedder()
+    embeddings = embedder.encode(chunks)
+
+    # 插入数据库
+        cursor = self._get_connection().cursor()
+        for i, embedding in enumerate(embeddings):
+        doc_id_chunk = f"{doc_id}#{i}"
+        embedding_bytes = sqlite_vec.serialize_float32(embedding.tolist())
+        chunk_metadata = json.dumps({
+        ** (metadata or {}),
+        'chunk_index': i,
+        'total_chunks': len(chunks)
+        })
+
+        cursor.execute(
+        "INSERT OR REPLACE INTO vectors (doc_id, embedding, metadata) VALUES (?, ?, ?)",
+        (doc_id_chunk, embedding_bytes, chunk_metadata)
+        )
+
+self._get_connection().commit()
+
+# 记录到 doc_mapping
+self.doc_mapping[doc_id] = {
+'chunks': len(chunks),
+'metadata': metadata or {}
+}
+
+monitor.stop({
+'chunks': len(chunks),
+'dim': self.dim
+})
+
+logger.info(f"✅ 添加文本：{doc_id} ({len(chunks)} 个块)")
+
+def add_document(self, doc_id: str, embedding: List[float],
+metadata: Optional[Dict[str, Any]] = None) -> None:
+"""
+添加文档向量到索引
+
+Args:
+doc_id: 文档 ID
+embedding: 文档向量 (list of floats)
+metadata: 文档元数据
+"""
+# 检查维度
+if len(embedding) != self.dim:
+raise ValueError(
+f"向量维度不匹配：期望 {self.dim}, 得到 {len(embedding)}"
+)
+
+cursor = self._get_connection().cursor()
+
+# 将向量转换为 sqlite-vec 格式
+embedding_bytes = sqlite_vec.serialize_float32(embedding)
+
+# 插入或更新向量
+cursor.execute("""
+INSERT OR REPLACE INTO vectors (doc_id, embedding, metadata)
+VALUES (?, ?, ?)
+""", (doc_id, embedding_bytes, json.dumps(metadata or {})))
+
+# sqlite-vec 的 vec0 虚拟表会自动同步，不需要单独插入
+# 只需确保主表 vectors 有数据即可
+
+# 存储文档信息
+self.doc_mapping[doc_id] = {
+'doc_id': doc_id,
+'metadata': metadata or {}
+}
+
+self._get_connection().commit()
+
+# 保存索引（如果是文件模式）
+if self.index_path != ":memory:":
+self._save_index()
+
+def search(self, query_embedding: List[float], top_k: int = 10,
+distance_metric: str = 'cosine') -> List[Tuple[str, float]]:
+"""
+语义搜索
+
+Args:
+query_embedding: 查询向量
+top_k: 返回结果数量
+distance_metric: 距离度量方式 ('cosine' 或 'l2')
+
+Returns:
+List[Tuple[doc_id, similarity]]: 相似文档列表，按相似度降序排列
+"""
+monitor = get_perf_monitor()
+
+# 如果监控器不可用，直接执行搜索
+if monitor:
+with monitor.start("semantic_search"):
+return self._perform_search(query_embedding, top_k, distance_metric)
+else:
+return self._perform_search(query_embedding, top_k, distance_metric)
+
+def _perform_search(self, query_embedding: List[float], top_k: int, distance_metric: str) -> List[Tuple[str, float]]:
+"""执行实际搜索逻辑"""
+# 检查维度
+if len(query_embedding) != self.dim:
+raise ValueError(
+f"查询向量维度不匹配：期望 {self.dim}, 得到 {len(query_embedding)}"
+)
+
+cursor = self._get_connection().cursor()
+
+# 选择距离函数
+if distance_metric == 'cosine':
+distance_func = 'vec_distance_cosine'
+elif distance_metric == 'l2':
+distance_func = 'vec_distance_L2'
+else:
+raise ValueError(f"不支持的距离度量：{distance_metric}")
+
+# 执行搜索
+query = f"""
+SELECT v.doc_id, {distance_func}(v.embedding, ?) as distance
+FROM vectors v
+ORDER BY distance
+LIMIT ?
+"""
+cursor.execute(query, (sqlite_vec.serialize_float32(query_embedding), top_k))
+results = cursor.fetchall()
+
+# 转换结果
+output = [(row['doc_id'], float(row['distance'])) for row in results]
+
+return output
+
+def delete_document(self, doc_id: str) -> bool:
+"""
+删除文档
+
+Args:
+doc_id: 文档 ID
+
+Returns:
+bool: 是否成功删除
+"""
+cursor = self._get_connection().cursor()
+
+# 检查文档是否存在
+cursor.execute("SELECT doc_id FROM vectors WHERE doc_id = ?", (doc_id,))
+if not cursor.fetchone():
+return False
+
+# 从主表删除
+cursor.execute("DELETE FROM vectors WHERE doc_id = ?", (doc_id,))
+
+# 从向量索引删除
+cursor.execute("DELETE FROM vectors_vec WHERE doc_id = ?", (doc_id,))
+
+# 从映射中删除
+if doc_id in self.doc_mapping:
+del self.doc_mapping[doc_id]
+
+self._get_connection().commit()
+
+# 保存索引（如果是文件模式）
+if self.index_path != ":memory:":
+self._save_index()
+
+return True
+
+def get_stats(self) -> Dict[str, Any]:
+"""获取索引统计信息"""
+# 创建临时连接（避免线程问题）
+conn = sqlite3.connect(self.index_path)
+conn.row_factory = sqlite3.Row
+sqlite_vec.load(conn)
+
+try:
+cursor = conn.cursor()
+cursor.execute("SELECT COUNT(*) as count FROM vectors")
+doc_count = cursor.fetchone()['count']
+
+return {
+'document_count': doc_count,
+'dimension': self.dim,
+'index_path': self.index_path,
+'is_memory': self.index_path == ":memory:"
+}
+finally:
+conn.close()
+
+def save(self) -> None:
+"""保存索引到磁盘"""
+if self.index_path == ":memory:":
+raise ValueError("内存索引无法保存，请指定 index_path")
+
+self._save_index()
+self._save_doc_mapping()
+
+def load(self, index_path: str) -> None:
+"""
+从磁盘加载索引
+
+Args:
+index_path: 索引文件路径
+"""
+# 关闭现有连接
+if self._conn:
+self._conn.close()
+
+self.index_path = index_path
+self._load_or_create_index()
+
+def _save_index(self) -> None:
+"""保存索引到磁盘"""
+if self.index_path and self.index_path != ":memory:":
+self._get_connection().commit()
+
+def _save_doc_mapping(self) -> None:
+"""保存文档映射"""
+if self.index_path and self.index_path != ":memory:":
+mapping_path = self.index_path + '.mapping.json'
+with open(mapping_path, 'w', encoding='utf-8') as f:
+json.dump(self.doc_mapping, f, ensure_ascii=False, indent=2)
+
+def _load_doc_mapping(self) -> None:
+"""加载文档映射"""
+if self.index_path and self.index_path != ":memory:":
+mapping_path = self.index_path + '.mapping.json'
+if os.path.exists(mapping_path):
+with open(mapping_path, 'r', encoding='utf-8') as f:
+self.doc_mapping = json.load(f)
+
+def close(self) -> None:
+"""关闭数据库连接"""
+if self._conn:
+self._conn.close()
+self._conn = None
+
+def __enter__(self):
+return self
+
+def __exit__(self, exc_type, exc_val, exc_tb):
+self.close()
+
+
+# 测试
+if __name__ == "__main__":
+try:
+# 创建测试索引
+print("🔍 语义索引测试 (sqlite-vec)")
+print("-" * 50)
+
+# 测试 1536 维
+print("\n测试 1536 维向量:")
+index_1536 = SemanticIndex(dim=1536)
+test_embedding_1536 = [0.1] * 1536
+index_1536.add_document("doc_1", test_embedding_1536, {"title": "测试文档 1"})
+print(f"✅ 1536 维索引创建成功")
+
+# 测试搜索
+results = index_1536.search(test_embedding_1536, top_k=5)
+print(f"🔍 搜索结果：{results}")
+
+# 测试 512 维
+print("\n测试 512 维向量:")
+index_512 = SemanticIndex(dim=512)
+test_embedding_512 = [0.1] * 512
+index_512.add_document("doc_2", test_embedding_512, {"title": "测试文档 2"})
+print(f"✅ 512 维索引创建成功")
+
+# 测试删除
+print("\n测试删除文档:")
+deleted = index_1536.delete_document("doc_1")
+print(f"✅ 删除文档 doc_1: {deleted}")
+
+# 测试统计
+print("\n测试统计信息:")
+stats = index_512.get_stats()
+print(f"📊 统计信息：{stats}")
+
+# 测试文件持久化
+print("\n测试文件持久化:")
+file_index = SemanticIndex(index_path="/tmp/test_semantic_index.db", dim=1536)
+file_index.add_document("file_doc", [0.2] * 1536, {"title": "文件测试"})
+file_index.save()
+print(f"✅ 文件索引保存成功")
+
+# 重新加载
+loaded_index = SemanticIndex(index_path="/tmp/test_semantic_index.db", dim=1536)
+loaded_results = loaded_index.search([0.2] * 1536, top_k=5)
+print(f"🔍 重新加载后搜索结果：{loaded_results}")
+
+print("\n✅ sqlite-vec 索引功能正常")
+print(" 支持维度：1536, 512, 384 等")
+print(" 测试完成")
+
+# 清理
+file_index.close()
+loaded_index.close()
+
+except Exception as e:
+print(f"❌ 测试失败：{e}")
+import traceback
+traceback.print_exc()

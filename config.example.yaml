@@ -1,0 +1,46 @@
+# SecondBrain MCP 配置文件
+# 路径：~/.config/secondbrain/config.yaml
+
+# Vault 配置
+vaults:
+  - path: ~/NanobotMemory
+    name: personal
+    enabled: true
+  - path: ~/Work/Notes
+    name: work
+    enabled: false
+
+# 索引设置
+index:
+  semantic:
+    enabled: true
+    model: BAAI/bge-small-zh-v1.5
+    chunk_size: 800
+    chunk_overlap: 150
+    db_path: ~/.local/share/secondbrain/semantic_index.db
+  keyword:
+    enabled: true
+    backend: sqlite_fts5  # 或 bm25
+
+# 优先级配置
+priority:
+  config_path: ~/.config/secondbrain/priority_config.yaml
+  enabled: true
+  default_priority: 3
+
+# 安全设置
+security:
+  max_read_size: 1048576  # 1MB
+  max_batch_size: 20
+  require_confirm_delete: true
+  excluded_dirs:
+    - .obsidian
+    - .trash
+    - .git
+
+# 日志设置
+logging:
+  level: INFO
+  file: ~/.local/share/secondbrain/mcp.log
+  max_size: 10485760  # 10MB
+  backup_count: 5
