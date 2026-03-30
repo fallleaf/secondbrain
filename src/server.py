@@ -4,17 +4,27 @@ SecondBrain MCP 服务器
 基于 FastMCP 的 MCP 服务器实现
 """
 
-from src.tools.index_mgmt import IndexManager
-from src.tools.secondbrain_tools import SecondBrainTools
-from src.config.settings import load_config, Settings
-from mcp.types import Tool, TextContent
-from mcp.server.stdio import stdio_server
-from mcp.server import Server
 import asyncio
+import logging
 import sys
-import json
 from pathlib import Path
 from typing import Optional
+
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+
+from src.config.settings import load_config, Settings
+from src.tools.index_mgmt import IndexManager
+from src.tools.secondbrain_tools import SecondBrainTools
+
+# 配置日志：输出到 stderr，避免污染 stdout (MCP 协议要求)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr  # 关键：日志必须输出到 stderr
+)
+logger = logging.getLogger(__name__)
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -47,19 +57,23 @@ class SecondBrainServer:
 
     def _load_config(self) -> None:
         """加载配置"""
-        print("📝 加载配置...")
-        self.config = load_config(self.config_path)
-        print("✅ 配置加载成功")
+        logger.info("📝 加载配置...")
+        try:
+            self.config = load_config(self.config_path)
+            logger.info("✅ 配置加载成功")
+        except Exception as e:
+            logger.error(f"❌ 配置加载失败：{e}")
+            raise
 
     def _init_components(self) -> None:
         """初始化组件"""
-        print("\n🔧 初始化组件...")
+        logger.info("\n🔧 初始化组件...")
 
         # 初始化工具
         self.tools = SecondBrainTools(self.config)
         self.index_manager = IndexManager(self.config)
 
-        print("✅ 组件初始化完成")
+        logger.info("✅ 组件初始化完成")
 
     def _register_tools(self) -> None:
         """注册 MCP 工具"""
