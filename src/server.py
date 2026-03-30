@@ -3,12 +3,20 @@ SecondBrain MCP 服务器
 
 基于 FastMCP 的 MCP 服务器实现
 """
-
 import asyncio
 import logging
 import sys
 from pathlib import Path
 from typing import Optional
+
+# 配置日志：输出到 stderr，避免污染 stdout (MCP 协议要求)
+# 必须在导入其他模块之前调用
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -17,14 +25,6 @@ from mcp.types import Tool, TextContent
 from src.config.settings import load_config, Settings
 from src.tools.index_mgmt import IndexManager
 from src.tools.secondbrain_tools import SecondBrainTools
-
-# 配置日志：输出到 stderr，避免污染 stdout (MCP 协议要求)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    stream=sys.stderr  # 关键：日志必须输出到 stderr
-)
-logger = logging.getLogger(__name__)
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))

@@ -15,6 +15,11 @@ from src.utils.frontmatter import parse_frontmatter, update_frontmatter
 from src.index.keyword_index import KeywordIndex
 from src.index.semantic_index import SemanticIndex
 from src.index.hybrid_retriever import HybridRetriever
+import logging
+import sys
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", stream=sys.stderr)
+logger = logging.getLogger(__name__)
 from src.tools.link_analyzer import LinkAnalyzer
 from src.tools.tag_manager import TagManager
 
@@ -69,11 +74,11 @@ class SecondBrainTools:
                         # 尝试自动检测维度（如果数据库已存在）
                         # 如果数据库不存在，使用默认维度 512
                         semantic_index = SemanticIndex(semantic_db_path, dim=None)
-                        print(f"✅ 语义索引初始化成功 (维度：{semantic_index.dim})")
+                        logger.info("✅ 语义索引初始化成功 (维度：%s)", semantic_index.dim)
                     except ImportError as e:
-                        print(f"警告：语义索引不可用 ({e})，将仅使用关键词索引")
+                        logger.warning("警告：语义索引不可用 (%s)，将仅使用关键词索引", e)
                     except Exception as e:
-                        print(f"警告：语义索引初始化失败 ({e})，将仅使用关键词索引")
+                        logger.warning("警告：语义索引初始化失败 (%s)，将仅使用关键词索引", e)
 
                 # 创建优先级分类器（每个 Vault 共享同一个）
                 priority_classifier = PriorityClassifier(config.priority.config_path)
@@ -94,10 +99,10 @@ class SecondBrainTools:
                     'hybrid_retriever': hybrid_retriever,
                     'priority_classifier': priority_classifier
                 }
-                print(f"✅ Vault '{vault_name}' 初始化成功")
+                logger.info("✅ Vault '%s' 初始化成功", vault_name)
 
             except Exception as e:
-                print(f"❌ 初始化 Vault '{vault_name}' 失败：{e}")
+                logger.error("❌ 初始化 Vault '%s' 失败：%s", vault_name, e)
                 import traceback
                 traceback.print_exc()
                 continue  # 跳过失败的 Vault
